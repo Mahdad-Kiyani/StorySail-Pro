@@ -5,6 +5,7 @@ import React, {
 	PropsWithChildren,
 	useRef,
 	useMemo,
+	useCallback,
 } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
@@ -33,6 +34,8 @@ export function useAuth() {
 
 export function AuthProvider({ children }: PropsWithChildren) {
 	const [session, setSession] = useState<Session | null>(null);
+	const [isLoading, setIsLoading] = useState(true);
+	
 	const {
 		setUserDetails,
 		setShowNotification,
@@ -42,109 +45,137 @@ export function AuthProvider({ children }: PropsWithChildren) {
 		setIsFirstLogin,
 		setLastRewardDate,
 	} = useUserStore();
+	
 	const { getArticlesByUser } = useWritingsStore();
-
 	const { setData, setLastFetch, refetchFlag } = useHomeStore();
 
 	const router = useRouter();
-
 	const bottomSheetRef = useRef<BottomSheetModal>(null);
 
-	const handlePresentModalPress = () => bottomSheetRef.current?.present();
+	const handlePresentModalPress = useCallback(() => {
+		bottomSheetRef.current?.present();
+	}, []);
 
-	async function getProfile(userId: string) {
+	const getProfile = useCallback(async (userId: string) => {
+		if (!userId) return;
+
 		try {
-			if (!userId) return;
-			getArticlesByUser();
+			await getArticlesByUser();
+			
 			const { data, error, status } = await supabase
 				.from("profiles")
-				.select(
-					`username, website, avatar_url, full_name, coins, lastRewardDate`
-				)
+				.select("username, website, avatar_url, full_name, coins, lastRewardDate")
 				.eq("id", userId)
 				.single();
+
 			if (error && status !== 406) {
+				console.error("Error fetching profile:", error);
 				setSession(null);
+				return;
 			}
+
 			if (data) {
 				setUserDetails(data);
 			}
 		} catch (error) {
 			console.error("Error getting profile:", error);
 		}
-	}
+	}, [getArticlesByUser, setUserDetails]);
 
-	const fetchHomeData = async () => {
+	const fetchHomeData = useCallback(async () => {
 		try {
 			const { data, error } = await supabase
 				.from("app_home")
 				.select("*")
 				.eq("active", 1)
 				.single();
+
 			if (error) {
-				console.log("error fetching home data");
+				console.error("Error fetching home data:", error);
+				return;
 			}
+
 			if (data) {
 				setData(data);
 				setLastFetch(new Date());
 			}
 		} catch (error) {
-			console.log("error fetching home data");
+			console.error("Error fetching home data:", error);
 		}
-	};
+	}, [setData, setLastFetch]);
 
-	const supbaseFn = () => {
-		const { data } = supabase.auth.onAuthStateChange(async (_, session) => {
-			setSession(session);
+	const handleAuthStateChange = useCallback(async (event: string, session: Session | null) => {
+		setSession(session);
+		setIsLoading(true);
+
+		try {
 			if (session && session.user) {
-				fetchHomeData();
+				await fetchHomeData();
+				
 				if (session.user.id !== user?.id) {
-					setUser(session ? session.user : null);
+					setUser(session.user);
 					await getProfile(session.user.id);
 				}
+
 				if (isFirstLogin) {
 					router.replace("/onboarding");
-				} else router.replace("/(tabs)/home");
+				} else {
+					router.replace("/(tabs)/home");
+				}
 			} else {
 				setUser(null);
 				router.replace("/login");
 			}
-		});
-		return data;
-	};
+		} catch (error) {
+			console.error("Error handling auth state change:", error);
+		} finally {
+			setIsLoading(false);
+		}
+	}, [fetchHomeData, user?.id, setUser, getProfile, isFirstLogin, router]);
 
 	useEffect(() => {
-		// Listen for changes to authentication state
-		const data = supbaseFn();
+		const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthStateChange);
+		
 		return () => {
-			data.subscription.unsubscribe();
+			subscription.unsubscribe();
 		};
-	}, [refetchFlag]);
+	}, [handleAuthStateChange, refetchFlag]);
 
 	// Log out the user
-	const signOut = async () => {
+	const signOut = useCallback(async () => {
 		if (!session) return;
-		await supabase.auth.signOut().then(() => {
-			GoogleSignin.signOut();
-		});
-		setSession(null);
-		setIsFirstLogin(false);
-		setData(null);
-		setUser(null);
-		setUserDetails({
-			coins: 0,
-			username: "username",
-			website: "",
-			avatar_url: "https://www.gravatar.com/avatar/?d=identicon",
-			full_name: "Your name here!",
-			lastRewardDate: new Date("2021-01-01T00:00:00Z"),
-		});
-		setLastRewardDate(new Date("2021-01-01T00:00:00Z"));
-	};
 
-	const handleNotificationPermission = async () => {
+		try {
+			await supabase.auth.signOut();
+			await GoogleSignin.signOut();
+			
+			setSession(null);
+			setIsFirstLogin(false);
+			setData(null);
+			setUser(null);
+			setUserDetails({
+				coins: 0,
+				username: "username",
+				website: "",
+				avatar_url: "https://www.gravatar.com/avatar/?d=identicon",
+				full_name: "Your name here!",
+				lastRewardDate: new Date("2021-01-01T00:00:00Z"),
+			});
+			setLastRewardDate(new Date("2021-01-01T00:00:00Z"));
+		} catch (error) {
+			console.error("Error signing out:", error);
+		}
+	}, [session, setIsFirstLogin, setData, setUser, setUserDetails, setLastRewardDate]);
+
+	const handleNotificationPermission = useCallback(async () => {
+		if (!session?.user?.id) {
+			console.warn("No user session for notification permission");
+			return;
+		}
+
 		try {
 			let { status } = await Notifications.getPermissionsAsync();
+			
 			if (status !== "granted") {
 				({ status } = await Notifications.requestPermissionsAsync());
 			}
@@ -154,25 +185,31 @@ export function AuthProvider({ children }: PropsWithChildren) {
 					projectId: Constants?.expoConfig?.extra?.eas.projectId,
 				});
 
-				if (token?.data && session) {
+				if (token?.data) {
 					const { error } = await supabase.from("profiles").upsert({
-						id: session?.user.id,
+						id: session.user.id,
 						expo_push_token: token,
 					});
-					if (error) console.log(error);
+					
+					if (error) {
+						console.error("Error updating push token:", error);
+					}
 				}
 			} else {
 				setShowNotification(false);
 				const { error } = await supabase.from("profiles").upsert({
-					id: session?.user.id,
+					id: session.user.id,
 					expo_push_token: null,
 				});
-				if (error) console.log(error);
+				
+				if (error) {
+					console.error("Error removing push token:", error);
+				}
 			}
 		} catch (error) {
-			console.log(error);
+			console.error("Error handling notification permission:", error);
 		}
-	};
+	}, [session?.user?.id, setShowNotification]);
 
 	const value = useMemo(
 		() => ({
@@ -183,8 +220,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
 			handlePresentModalPress,
 			handleNotificationPermission,
 		}),
-		[user, session]
+		[user, session, signOut, handlePresentModalPress, handleNotificationPermission]
 	);
+
+	if (isLoading) {
+		// You might want to show a loading screen here
+		return null;
+	}
 
 	return (
 		<AuthContext.Provider value={value}>{children}</AuthContext.Provider>

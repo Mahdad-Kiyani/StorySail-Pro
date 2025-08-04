@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist , createJSONStorage } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 
 import { User, PostgrestError } from "@supabase/supabase-js";
 import zustandStorage from "./zustandStore";
@@ -24,121 +24,197 @@ export interface UserStore {
 	showNotification: boolean;
 	setShowNotification: (state: boolean) => void;
 	getCoins: () => number;
-	deductCoins: (state: number) => Promise<PostgrestError | null>;
-	getLastRewardDate: () =>Date;
-	setLastRewardDate: (state:Date) => Promise<PostgrestError | null>;
-	addCoins: (state: number) => Promise<PostgrestError | null>;
+	deductCoins: (amount: number) => Promise<{ success: boolean; error?: string }>;
+	getLastRewardDate: () => Date;
+	setLastRewardDate: (date: Date) => Promise<{ success: boolean; error?: string }>;
+	addCoins: (amount: number) => Promise<{ success: boolean; error?: string }>;
 }
+
+const DEFAULT_USER_DETAILS: UserDetails = {
+	coins: 0,
+	username: "username",
+	website: "",
+	avatar_url: "https://www.gravatar.com/avatar/?d=identicon",
+	full_name: "Your name here!",
+	lastRewardDate: new Date("2021-01-01T00:00:00Z"),
+};
 
 const useUserStore = create<UserStore>()(
 	persist(
 		(set, get) => ({
-			isFirstLogin: true as boolean,
+			isFirstLogin: true,
 			setIsFirstLogin: (state: boolean) => {
-				set({
-					isFirstLogin: state,
-				});
+				set({ isFirstLogin: state });
 			},
-			user: null as User | null,
+			user: null,
 			setUser: (state: User | null) => {
-				set({
-					user: state,
-				});
+				set({ user: state });
 			},
-			userDetails: {
-				coins: 0,
-				username: "username",
-				website: "",
-				avatar_url: "https://www.gravatar.com/avatar/?d=identicon",
-				full_name: "Your name here!",
-				lastRewardDate: new Date("2021-01-01T00:00:00Z"),
-			},
+			userDetails: DEFAULT_USER_DETAILS,
 			setUserDetails: (state: UserDetails) => {
-				set({
-					userDetails: state,
-				});
+				set({ userDetails: state });
 			},
-			showNotification: false as boolean,
+			showNotification: false,
 			setShowNotification: (state: boolean) => {
-				set({
-					showNotification: state,
-				});
+				set({ showNotification: state });
 			},
 			getCoins: () => get().userDetails.coins,
-			deductCoins: async (state: number) => {
+			deductCoins: async (amount: number) => {
+				const currentUser = get().user;
+				const currentCoins = get().userDetails.coins;
+
+				if (!currentUser?.id) {
+					return { success: false, error: "User not authenticated" };
+				}
+
+				if (currentCoins < amount) {
+					return { success: false, error: "Insufficient coins" };
+				}
+
+				const newCoins = currentCoins - amount;
 				const updates = {
-					id: get().user?.id,
-					coins: get().userDetails.coins - state,
+					id: currentUser.id,
+					coins: newCoins,
 				};
+
+				// Optimistic update
 				set({
 					userDetails: {
 						...get().userDetails,
-						coins: updates.coins,
+						coins: newCoins,
 					},
 				});
 
-				const { error } = await supabase
-					.from("profiles")
-					.upsert(updates);
-				if (error) {
+				try {
+					const { error } = await supabase
+						.from("profiles")
+						.upsert(updates);
+
+					if (error) {
+						// Revert optimistic update on error
+						set({
+							userDetails: {
+								...get().userDetails,
+								coins: currentCoins,
+							},
+						});
+						return { success: false, error: error.message };
+					}
+
+					return { success: true };
+				} catch (error) {
+					// Revert optimistic update on exception
 					set({
 						userDetails: {
 							...get().userDetails,
-							coins: get().userDetails.coins + state,
+							coins: currentCoins,
 						},
 					});
+					return { success: false, error: "Network error" };
 				}
-				return error;
 			},
-			addCoins: async (state: number) => {
+			addCoins: async (amount: number) => {
+				const currentUser = get().user;
+				const currentCoins = get().userDetails.coins;
+
+				if (!currentUser?.id) {
+					return { success: false, error: "User not authenticated" };
+				}
+
+				if (amount <= 0) {
+					return { success: false, error: "Invalid amount" };
+				}
+
+				const newCoins = currentCoins + amount;
 				const updates = {
-					id: get().user?.id,
-					coins: get().userDetails.coins + state,
+					id: currentUser.id,
+					coins: newCoins,
 				};
+
+				// Optimistic update
 				set({
 					userDetails: {
 						...get().userDetails,
-						coins: updates.coins,
+						coins: newCoins,
 					},
 				});
 
-				const { error } = await supabase
-					.from("profiles")
-					.upsert(updates);
-				if (error) {
+				try {
+					const { error } = await supabase
+						.from("profiles")
+						.upsert(updates);
+
+					if (error) {
+						// Revert optimistic update on error
+						set({
+							userDetails: {
+								...get().userDetails,
+								coins: currentCoins,
+							},
+						});
+						return { success: false, error: error.message };
+					}
+
+					return { success: true };
+				} catch (error) {
+					// Revert optimistic update on exception
 					set({
 						userDetails: {
 							...get().userDetails,
-							coins: get().userDetails.coins - state,
+							coins: currentCoins,
 						},
 					});
+					return { success: false, error: "Network error" };
 				}
-				return error;
 			},
 			getLastRewardDate: () => get().userDetails.lastRewardDate,
-			setLastRewardDate: async (date) => {
+			setLastRewardDate: async (date: Date) => {
+				const currentUser = get().user;
+
+				if (!currentUser?.id) {
+					return { success: false, error: "User not authenticated" };
+				}
+
 				const updates = {
-					id: get().user?.id,
-					lastRewardDate: new Date(date),
+					id: currentUser.id,
+					lastRewardDate: date,
 				};
+
+				// Optimistic update
 				set({
 					userDetails: {
 						...get().userDetails,
-						lastRewardDate: new Date(date),
+						lastRewardDate: date,
 					},
 				});
-				const { error } = await supabase
-					.from("profiles")
-					.upsert(updates);
-				if (error) {
+
+				try {
+					const { error } = await supabase
+						.from("profiles")
+						.upsert(updates);
+
+					if (error) {
+						// Revert optimistic update on error
+						set({
+							userDetails: {
+								...get().userDetails,
+								lastRewardDate: DEFAULT_USER_DETAILS.lastRewardDate,
+							},
+						});
+						return { success: false, error: error.message };
+					}
+
+					return { success: true };
+				} catch (error) {
+					// Revert optimistic update on exception
 					set({
 						userDetails: {
 							...get().userDetails,
-							lastRewardDate: new Date("2021-01-01T00:00:00Z"),
+							lastRewardDate: DEFAULT_USER_DETAILS.lastRewardDate,
 						},
 					});
+					return { success: false, error: "Network error" };
 				}
-				return error;
 			},
 		}),
 		{

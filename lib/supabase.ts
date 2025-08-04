@@ -1,6 +1,7 @@
 import "react-native-url-polyfill/auto";
 import { createClient } from "@supabase/supabase-js";
 import { MMKV } from "react-native-mmkv";
+import { getEnvironmentConfig } from "../utils/env";
 
 const storage = new MMKV();
 
@@ -13,8 +14,11 @@ const zustandStorage = {
 	removeItem: (name: string) => storage.delete(name),
 };
 
-export const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+// Get environment configuration with validation
+const envConfig = getEnvironmentConfig();
+
+export const supabaseUrl = envConfig.SUPABASE_URL;
+export const supabaseAnonKey = envConfig.SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 	auth: {

@@ -1,29 +1,28 @@
 import { create } from "zustand";
-import { persist , createJSONStorage } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { supabase } from "../lib/supabase";
 import zustandStorage from "./zustandStore";
 
-
 export interface UserWriting {
-	id: string; // Unique identifier for the writing
-	user_id: string; // ID of the user who created the writing
+	id: string;
+	user_id: string;
 	title: string;
 	content: string;
 	category: string;
 	tags: string[];
 	stars_count: number;
-	poster_image_url: string; // URL of the poster image
-	created_at: Date; // Timestamp indicating when the writing was created
-	updated_at: Date; // Timestamp indicating when the writing was last updated
+	poster_image_url: string;
+	created_at: Date;
+	updated_at: Date;
 }
 
 export interface WritingsStore {
 	articles: UserWriting[];
 	drafts: UserWriting[];
-	setArticles: (state: UserWriting[]) => void;
-	addArticle: (state: UserWriting) => Promise<Error|String>;
-	removeArticle: (id: string) => Promise<void>;
-	getArticlesByUser: () => Promise<void>;
+	setArticles: (articles: UserWriting[]) => void;
+	addArticle: (article: UserWriting) => Promise<{ success: boolean; error?: string }>;
+	removeArticle: (id: string) => Promise<{ success: boolean; error?: string }>;
+	getArticlesByUser: () => Promise<{ success: boolean; error?: string }>;
 	saveDraft: (draft: UserWriting) => void;
 	deleteDraft: (id: string) => void;
 }
@@ -31,96 +30,127 @@ export interface WritingsStore {
 const useWritingsStore = create<WritingsStore>()(
 	persist(
 		(set, get) => ({
-			articles: [] as UserWriting[],
-			drafts: [] as UserWriting[], // Initialize drafts array
-			setArticles: (state: UserWriting[]) => {
-				set({ articles: state });
+			articles: [],
+			drafts: [],
+			setArticles: (articles: UserWriting[]) => {
+				set({ articles });
 			},
-			addArticle: async (state: UserWriting) => {
-				// New article, add it
-				const { data, error } = await supabase
-					.from("user_writings")
-					.upsert(state);
+			addArticle: async (article: UserWriting) => {
+				try {
+					const { data, error } = await supabase
+						.from("user_writings")
+						.upsert(article);
 
-				if (error) {
-					console.error("Error adding article:", error.message);
-					return new Error(error.message);
-				}
+					if (error) {
+						console.error("Error adding article:", error.message);
+						return { success: false, error: error.message };
+					}
 
-				if (state) {
-					if(get().articles.length === 0){
-						set({ articles: [state] });
-						return "Article added successfully";
+					if (!data) {
+						return { success: false, error: "No data returned after adding article" };
 					}
-					// check if the article already exists in the store
-					// if it does, update the article
-					const newArticles = get().articles.map((article) =>
-						article.id === state.id ? state : article
-					);
-					// if it doesn't, add the article to the store
-					if (!newArticles.find((article) => article.id === state.id)) {
-						newArticles.push(state);
+
+					const currentArticles = get().articles;
+					const currentDrafts = get().drafts;
+
+					// Update articles list
+					const updatedArticles = currentArticles.length === 0 
+						? [article]
+						: currentArticles.map((existingArticle) =>
+							existingArticle.id === article.id ? article : existingArticle
+						);
+
+					// Add new article if it doesn't exist
+					if (!updatedArticles.find((existingArticle) => existingArticle.id === article.id)) {
+						updatedArticles.push(article);
 					}
-					set({ articles: newArticles });
-					// check if it was a draft
-					set({ drafts: get().drafts.filter((draft) => draft.id !== state.id) });
-				} else {
-					console.error("No data returned after adding article");
+
+					// Remove from drafts if it was a draft
+					const updatedDrafts = currentDrafts.filter((draft) => draft.id !== article.id);
+
+					set({ 
+						articles: updatedArticles,
+						drafts: updatedDrafts
+					});
+
+					return { success: true };
+				} catch (error) {
+					console.error("Error adding article:", error);
+					return { success: false, error: "Network error" };
 				}
-				return "Article added successfully";
 			},
 			removeArticle: async (id: string) => {
-				const { error } = await supabase
-					.from("user_writings")
-					.delete()
-					.eq("id", id);
-				if (error) {
-					console.error("Error removing article:", error.message);
-				} else {
-					set({
-						articles: get().articles.filter(
-							(article) => article.id !== id
-						),
-					});
+				try {
+					const { error } = await supabase
+						.from("user_writings")
+						.delete()
+						.eq("id", id);
+
+					if (error) {
+						console.error("Error removing article:", error.message);
+						return { success: false, error: error.message };
+					}
+
+					const currentArticles = get().articles;
+					const updatedArticles = currentArticles.filter((article) => article.id !== id);
+					set({ articles: updatedArticles });
+
+					return { success: true };
+				} catch (error) {
+					console.error("Error removing article:", error);
+					return { success: false, error: "Network error" };
 				}
 			},
 			getArticlesByUser: async () => {
-				const currentSession = await supabase.auth.getSession();
-				if (!currentSession) {
-					console.error("No user logged in");
-					return;
+				try {
+					const currentSession = await supabase.auth.getSession();
+					
+					if (!currentSession?.data?.session?.user?.id) {
+						return { success: false, error: "No user logged in" };
+					}
+
+					const userId = currentSession.data.session.user.id;
+					const { data, error } = await supabase
+						.from("user_writings")
+						.select("*")
+						.eq("user_id", userId);
+
+					if (error) {
+						console.error("Error fetching articles:", error.message);
+						return { success: false, error: error.message };
+					}
+
+					set({ articles: data || [] });
+					return { success: true };
+				} catch (error) {
+					console.error("Error fetching articles:", error);
+					return { success: false, error: "Network error" };
 				}
-				const userId = currentSession?.data.session?.user?.id;
-				const { data, error } = await supabase
-					.from("user_writings")
-					.select("*")
-					.eq("user_id", userId);
-				if (error) {
-					console.error("Error fetching articles:", error.message);
-					return;
-				}
-				set({ articles: data });
 			},
 			saveDraft: (draft: UserWriting) => {
-				// match id of the new article with the id of the article in the store then update the article
-				if(get().drafts.length === 0){
+				const currentDrafts = get().drafts;
+
+				if (currentDrafts.length === 0) {
 					set({ drafts: [draft] });
 					return;
 				}
-				// check if the draft already exists in the store
-				const newDrafts = get().drafts.map((d) =>
-					d.id === draft.id ? draft : d
+
+				// Update existing draft or add new one
+				const updatedDrafts = currentDrafts.map((existingDraft) =>
+					existingDraft.id === draft.id ? draft : existingDraft
 				);
-				// if it doesn't, add the draft to the store
-				if (!newDrafts.find((d) => d.id === draft.id)) {
-					newDrafts.push(draft);
+
+				// Add new draft if it doesn't exist
+				if (!updatedDrafts.find((existingDraft) => existingDraft.id === draft.id)) {
+					updatedDrafts.push(draft);
 				}
-				set({ drafts: newDrafts });
+
+				set({ drafts: updatedDrafts });
 			},
 			deleteDraft: (id: string) => {
-				set({
-					drafts: get().drafts.filter((draft) => draft.id !== id),
-				});
+				const currentDrafts = get().drafts;
+				const updatedDrafts = currentDrafts.filter((draft) => draft.id !== id);
+				set({ drafts: updatedDrafts });
 			}
 		}),
 		{

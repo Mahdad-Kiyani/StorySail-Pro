@@ -1,7 +1,8 @@
 {
 	"env": {
 		"browser": true,
-		"es2021": true
+		"es2021": true,
+		"react-native/react-native": true
 	},
 	"extends": [
 		"eslint:recommended",
@@ -20,7 +21,7 @@
 		"ecmaVersion": "latest",
 		"sourceType": "module"
 	},
-	"plugins": ["react", "@typescript-eslint"],
+	"plugins": ["react", "@typescript-eslint", "react-native"],
 	"rules": {
 		"react/jsx-filename-extension": [
 			"error",
@@ -36,29 +37,66 @@
 				"tsx": "never"
 			}
 		],
-		"no-console": "off",
+		"no-console": ["warn", { "allow": ["warn", "error"] }],
 		"no-use-before-define": "off",
-		"react-hooks/exhaustive-deps": "off",
+		"@typescript-eslint/no-use-before-define": ["error"],
+		"react-hooks/exhaustive-deps": "warn",
 		"react/function-component-definition": "off",
-		"react/no-unstable-nested-components":"off",
+		"react/no-unstable-nested-components": "warn",
 		"no-shadow": "off",
-		"react/jsx-props-no-spreading": "off",
+		"@typescript-eslint/no-shadow": ["error"],
+		"react/jsx-props-no-spreading": "warn",
 		"react/destructuring-assignment": "off",
 		"react/require-default-props": "off",
-		"react/no-array-index-key": "off",
+		"react/no-array-index-key": "warn",
 		"global-require": "off",
-		"jsx-a11y/alt-text": "off",
+		"jsx-a11y/alt-text": "warn",
 		"no-unused-vars": "off",
-		"no-param-reassign": "off",
-		"no-nested-ternary": "off",
+		"@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+		"no-param-reassign": "warn",
+		"no-nested-ternary": "warn",
 		"no-undef": "off",
-		"import/no-unresolved": "off"
+		"import/no-unresolved": "off",
+		"import/prefer-default-export": "off",
+		"import/order": [
+			"error",
+			{
+				"groups": [
+					"builtin",
+					"external",
+					"internal",
+					"parent",
+					"sibling",
+					"index"
+				],
+				"newlines-between": "always",
+				"alphabetize": {
+					"order": "asc",
+					"caseInsensitive": true
+				}
+			}
+		],
+		"react/prop-types": "off",
+		"@typescript-eslint/explicit-function-return-type": "off",
+		"@typescript-eslint/explicit-module-boundary-types": "off",
+		"@typescript-eslint/no-explicit-any": "warn",
+		"react-native/no-unused-styles": "error",
+		"react-native/split-platform-components": "error",
+		"react-native/no-inline-styles": "warn",
+		"react-native/no-color-literals": "warn"
 	},
 	"settings": {
 		"import/resolver": {
 			"node": {
 				"extensions": [".js", ".jsx", ".ts", ".tsx"]
+			},
+			"typescript": {
+				"alwaysTryTypes": true,
+				"project": "./tsconfig.json"
 			}
+		},
+		"react": {
+			"version": "detect"
 		}
 	}
 }

@@ -5,6 +5,7 @@ import React, {
 	useImperativeHandle,
 	forwardRef,
 	RefObject,
+	memo,
 } from "react";
 import Animated, {
 	useSharedValue,
@@ -27,29 +28,51 @@ export interface ToastRef {
 	}) => void;
 }
 
-const Toast = forwardRef<ToastRef, {}>((props, ref) => {
+export interface ToastConfig {
+	type: "success" | "warning" | "error";
+	text: string;
+	duration: number;
+}
+
+// Toast style configurations extracted to a separate object
+const TOAST_STYLE_CONFIGS = {
+	success: {
+		containerStyle: styles.successToastContainer,
+		textStyle: styles.successToastText,
+		iconColor: "#1f8722",
+		iconName: "checkcircleo" as const,
+	},
+	warning: {
+		containerStyle: styles.warningToastContainer,
+		textStyle: styles.warningToastText,
+		iconColor: "#f08135",
+		iconName: "exclamationcircleo" as const,
+	},
+	error: {
+		containerStyle: styles.errorToastContainer,
+		textStyle: styles.errorToastText,
+		iconColor: "#d9100a",
+		iconName: "closecircleo" as const,
+	},
+} as const;
+
+const TOP_VALUE = Platform.OS === "ios" ? 60 : 30;
+const DISMISS_THRESHOLD = 100;
+const DISMISS_ANIMATION_DURATION = 500;
+
+const Toast = memo(forwardRef<ToastRef, {}>((_props, ref) => {
 	const toastTopAnimation = useSharedValue(-100);
-	const toastsideAnimation = useSharedValue(0);
+	const toastSideAnimation = useSharedValue(0);
 	const [showing, setShowing] = useState(false);
-	const [toastType, setToastType] = useState<"success" | "warning" | "error">(
-		"success"
-	);
+	const [toastType, setToastType] = useState<ToastConfig["type"]>("success");
 	const [toastText, setToastText] = useState("");
-	const TOP_VALUE = Platform.OS === "ios" ? 60 : 30;
 
 	const show = useCallback(
-		({
-			type,
-			text,
-			duration,
-		}: {
-			type: "success" | "warning" | "error";
-			text: string;
-			duration: number;
-		}) => {
+		({ type, text, duration }: ToastConfig) => {
 			setShowing(true);
 			setToastType(type);
 			setToastText(text);
+			
 			toastTopAnimation.value = withSequence(
 				withTiming(TOP_VALUE),
 				withDelay(
@@ -62,7 +85,7 @@ const Toast = forwardRef<ToastRef, {}>((props, ref) => {
 				)
 			);
 		},
-		[TOP_VALUE, toastTopAnimation]
+		[toastTopAnimation]
 	);
 
 	useImperativeHandle(
@@ -75,83 +98,62 @@ const Toast = forwardRef<ToastRef, {}>((props, ref) => {
 
 	const animatedTopStyles = useAnimatedStyle(() => ({
 		top: toastTopAnimation.value,
-		left: toastsideAnimation.value,
-		right: toastsideAnimation.value,
+		left: toastSideAnimation.value,
+		right: toastSideAnimation.value,
 	}));
+
+	const dismissToast = useCallback(() => {
+		toastSideAnimation.value = withSpring(0);
+		setShowing(false);
+	}, [toastSideAnimation]);
 
 	const handleGesture = useCallback(
 		(event: {
 			nativeEvent: { translationX: number; translationY: number };
 		}) => {
 			const { translationX, translationY } = event.nativeEvent;
-			const isHorizontalSwipe = Math.abs(translationX) > 100;
-			const isVerticalSwipe = Math.abs(translationY) > 100;
-
-			if (isHorizontalSwipe || isVerticalSwipe) {
-				const direction = isHorizontalSwipe
-					? translationX
-					: translationY;
-				toastsideAnimation.value = withSpring(
+			
+			if (Math.abs(translationX) > DISMISS_THRESHOLD || Math.abs(translationY) > DISMISS_THRESHOLD) {
+				const direction = Math.abs(translationX) > DISMISS_THRESHOLD ? translationX : translationY;
+				toastSideAnimation.value = withSpring(
 					direction > 0 ? 500 : -500,
 					{ velocity: 50 }
 				);
 
 				setTimeout(() => {
-					toastsideAnimation.value = withSpring(0);
-					setShowing(false);
-				}, 500);
+					runOnJS(dismissToast)();
+				}, DISMISS_ANIMATION_DURATION);
 			}
 		},
-		[]
+		[dismissToast, toastSideAnimation]
 	);
-
-	const getToastStyles = (type: "success" | "warning" | "error") => {
-		switch (type) {
-			case "success":
-				return [
-					styles.successToastContainer,
-					styles.successToastText,
-					"#1f8722",
-					"checkcircleo",
-				];
-			case "warning":
-				return [
-					styles.warningToastContainer,
-					styles.warningToastText,
-					"#f08135",
-					"exclamationcircleo",
-				];
-			case "error":
-			default:
-				return [
-					styles.errorToastContainer,
-					styles.errorToastText,
-					"#d9100a",
-					"closecircleo",
-				];
-		}
-	};
 
 	if (!showing) return null;
 
-	const [containerStyle, textStyle, iconColor, iconName] =
-		getToastStyles(toastType);
+	// Get toast style configuration based on toast type
+	const styleConfig = TOAST_STYLE_CONFIGS[toastType];
 
 	return (
 		<PanGestureHandler onGestureEvent={handleGesture}>
 			<Animated.View
 				style={[
 					styles.toastContainer,
-					containerStyle,
+					styleConfig.containerStyle,
 					animatedTopStyles,
 				]}
 			>
-				<AntDesign name={iconName} size={24} color={iconColor} />
-				<Text style={[styles.toastText, textStyle]}>{toastText}</Text>
+				<AntDesign 
+					name={styleConfig.iconName} 
+					size={24} 
+					color={styleConfig.iconColor} 
+				/>
+				<Text style={[styles.toastText, styleConfig.textStyle]}>
+					{toastText}
+				</Text>
 			</Animated.View>
 		</PanGestureHandler>
 	);
-});
+}));
 
 Toast.displayName = "Toast";
 
@@ -173,11 +175,6 @@ const styles = StyleSheet.create({
 	toastText: {
 		marginLeft: 14,
 		fontSize: 16,
-	},
-	toastIcon: {
-		width: 30,
-		height: 30,
-		resizeMode: "contain",
 	},
 	successToastContainer: {
 		backgroundColor: "#def1d7",
